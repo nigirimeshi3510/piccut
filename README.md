@@ -12,3 +12,6 @@
 - 元画像座標でクロップして PNG 保存
 - オプションで `640x200` にリサイズして保存
 - GUI上で出力ファイル名を編集可能
+
+# url
+https://nigirimeshi3510.github.io/piccut/
