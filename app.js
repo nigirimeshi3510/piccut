@@ -5,10 +5,13 @@ const TARGET_HEIGHT = 200;
 const fileInput = document.getElementById("fileInput");
 const saveButton = document.getElementById("saveButton");
 const resizeCheckbox = document.getElementById("resizeCheckbox");
+const filenameInput = document.getElementById("filenameInput");
 const imageInfo = document.getElementById("imageInfo");
 const cropInfo = document.getElementById("cropInfo");
 const previewCanvas = document.getElementById("previewCanvas");
 const ctx = previewCanvas.getContext("2d");
+const MIN_CROP_WIDTH = 64;
+const HANDLE_RADIUS = 10;
 
 let loadedImage = null;
 let imageBounds = null;
@@ -16,6 +19,8 @@ let cropRect = null;
 let activePointerId = null;
 let dragOffset = { x: 0, y: 0 };
 let currentObjectUrl = null;
+let interaction = null;
+let outputNameDirty = false;
 
 function setCanvasResolution() {
   const ratio = window.devicePixelRatio || 1;
@@ -78,6 +83,65 @@ function createInitialCrop(bounds) {
 function clampCropToBounds(rect, bounds) {
   rect.x = Math.max(bounds.x, Math.min(rect.x, bounds.x + bounds.width - rect.width));
   rect.y = Math.max(bounds.y, Math.min(rect.y, bounds.y + bounds.height - rect.height));
+}
+
+function getHandlePoints() {
+  return {
+    nw: { x: cropRect.x, y: cropRect.y },
+    ne: { x: cropRect.x + cropRect.width, y: cropRect.y },
+    sw: { x: cropRect.x, y: cropRect.y + cropRect.height },
+    se: { x: cropRect.x + cropRect.width, y: cropRect.y + cropRect.height }
+  };
+}
+
+function getHitHandle(point) {
+  const handles = getHandlePoints();
+  for (const [name, handle] of Object.entries(handles)) {
+    const dx = point.x - handle.x;
+    const dy = point.y - handle.y;
+    if (Math.hypot(dx, dy) <= HANDLE_RADIUS + 4) {
+      return name;
+    }
+  }
+  return null;
+}
+
+function getResizeCursor(handle) {
+  if (handle === "nw" || handle === "se") {
+    return "nwse-resize";
+  }
+  return "nesw-resize";
+}
+
+function getEffectiveMinCropWidth() {
+  return Math.min(MIN_CROP_WIDTH, imageBounds.width, imageBounds.height * TARGET_ASPECT);
+}
+
+function getMaxSizeFromAnchor(anchorX, anchorY, directionX, directionY) {
+  const maxWidthByX = directionX > 0
+    ? imageBounds.x + imageBounds.width - anchorX
+    : anchorX - imageBounds.x;
+  const maxWidthByY = (directionY > 0
+    ? imageBounds.y + imageBounds.height - anchorY
+    : anchorY - imageBounds.y) * TARGET_ASPECT;
+
+  return Math.min(maxWidthByX, maxWidthByY);
+}
+
+function resizeCropFromAnchor(point) {
+  const { anchorX, anchorY, directionX, directionY } = interaction;
+  const widthFromX = Math.abs(point.x - anchorX);
+  const widthFromY = Math.abs(point.y - anchorY) * TARGET_ASPECT;
+  const maxWidth = getMaxSizeFromAnchor(anchorX, anchorY, directionX, directionY);
+  const minWidth = Math.min(getEffectiveMinCropWidth(), maxWidth);
+  const nextWidth = Math.min(maxWidth, Math.max(minWidth, Math.min(widthFromX, widthFromY)));
+  const nextHeight = nextWidth / TARGET_ASPECT;
+
+  cropRect.width = nextWidth;
+  cropRect.height = nextHeight;
+  cropRect.x = directionX > 0 ? anchorX : anchorX - nextWidth;
+  cropRect.y = directionY > 0 ? anchorY : anchorY - nextHeight;
+  clampCropToBounds(cropRect, imageBounds);
 }
 
 function recomputeLayout(resetCrop = true) {
@@ -176,6 +240,16 @@ function draw() {
     ctx.lineTo(cropRect.x + cropRect.width, y);
     ctx.stroke();
   }
+
+  ctx.fillStyle = "#d66e31";
+  for (const handle of Object.values(getHandlePoints())) {
+    ctx.beginPath();
+    ctx.arc(handle.x, handle.y, HANDLE_RADIUS / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
   ctx.restore();
 
   const sourceCrop = getSourceCropRect();
@@ -205,29 +279,83 @@ function handlePointerDown(event) {
   }
 
   const point = getCanvasPoint(event);
-  if (!isInsideCrop(point)) {
+  const hitHandle = getHitHandle(point);
+
+  if (!hitHandle && !isInsideCrop(point)) {
     return;
   }
 
   activePointerId = event.pointerId;
-  dragOffset = {
-    x: point.x - cropRect.x,
-    y: point.y - cropRect.y
-  };
+  if (hitHandle) {
+    const anchorMap = {
+      nw: {
+        anchorX: cropRect.x + cropRect.width,
+        anchorY: cropRect.y + cropRect.height,
+        directionX: -1,
+        directionY: -1
+      },
+      ne: {
+        anchorX: cropRect.x,
+        anchorY: cropRect.y + cropRect.height,
+        directionX: 1,
+        directionY: -1
+      },
+      sw: {
+        anchorX: cropRect.x + cropRect.width,
+        anchorY: cropRect.y,
+        directionX: -1,
+        directionY: 1
+      },
+      se: {
+        anchorX: cropRect.x,
+        anchorY: cropRect.y,
+        directionX: 1,
+        directionY: 1
+      }
+    };
+    interaction = {
+      type: "resize",
+      handle: hitHandle,
+      ...anchorMap[hitHandle]
+    };
+  } else {
+    dragOffset = {
+      x: point.x - cropRect.x,
+      y: point.y - cropRect.y
+    };
+    interaction = { type: "move" };
+  }
 
   previewCanvas.classList.add("dragging");
   previewCanvas.setPointerCapture(activePointerId);
 }
 
 function handlePointerMove(event) {
-  if (!loadedImage || activePointerId !== event.pointerId) {
+  if (!loadedImage) {
     return;
   }
 
   const point = getCanvasPoint(event);
-  cropRect.x = point.x - dragOffset.x;
-  cropRect.y = point.y - dragOffset.y;
-  clampCropToBounds(cropRect, imageBounds);
+  const hitHandle = getHitHandle(point);
+
+  if (activePointerId !== event.pointerId) {
+    if (hitHandle) {
+      previewCanvas.style.cursor = getResizeCursor(hitHandle);
+    } else if (isInsideCrop(point)) {
+      previewCanvas.style.cursor = "grab";
+    } else {
+      previewCanvas.style.cursor = "default";
+    }
+    return;
+  }
+
+  if (interaction?.type === "resize") {
+    resizeCropFromAnchor(point);
+  } else {
+    cropRect.x = point.x - dragOffset.x;
+    cropRect.y = point.y - dragOffset.y;
+    clampCropToBounds(cropRect, imageBounds);
+  }
   storeCropRatios();
   draw();
 }
@@ -242,6 +370,8 @@ function endDrag(event) {
     previewCanvas.releasePointerCapture(activePointerId);
   }
   activePointerId = null;
+  interaction = null;
+  previewCanvas.style.cursor = "grab";
 }
 
 function loadImageFromFile(file) {
@@ -249,8 +379,8 @@ function loadImageFromFile(file) {
     return;
   }
 
-  if (!/^image\/(jpeg|png)$/.test(file.type) && !/\.(jpe?g|png)$/i.test(file.name)) {
-    window.alert("jpg/jpeg/png ファイルを選択してください。");
+  if (file.type && !file.type.startsWith("image/")) {
+    window.alert("画像ファイルを選択してください。");
     return;
   }
 
@@ -264,6 +394,8 @@ function loadImageFromFile(file) {
   image.onload = () => {
     loadedImage = image;
     imageInfo.textContent = `${file.name} / ${image.naturalWidth} x ${image.naturalHeight}`;
+    filenameInput.value = getDefaultOutputName(file.name, resizeCheckbox.checked);
+    outputNameDirty = false;
     saveButton.disabled = false;
     recomputeLayout(true);
   };
@@ -275,9 +407,14 @@ function loadImageFromFile(file) {
   image.src = currentObjectUrl;
 }
 
-function buildDownloadName(originalName, resized) {
+function getDefaultOutputName(originalName, resized) {
   const base = originalName.replace(/\.[^.]+$/, "");
-  return `${base}_${resized ? "640x200_" : ""}cropped.png`;
+  return `${base}_${resized ? "640x200_" : ""}cropped`;
+}
+
+function buildDownloadName(originalName, resized) {
+  const requestedName = filenameInput.value.trim() || getDefaultOutputName(originalName, resized);
+  return requestedName.toLowerCase().endsWith(".png") ? requestedName : `${requestedName}.png`;
 }
 
 function saveCroppedImage() {
@@ -331,6 +468,19 @@ previewCanvas.addEventListener("pointerdown", handlePointerDown);
 previewCanvas.addEventListener("pointermove", handlePointerMove);
 previewCanvas.addEventListener("pointerup", endDrag);
 previewCanvas.addEventListener("pointercancel", endDrag);
+previewCanvas.addEventListener("pointerleave", () => {
+  if (activePointerId === null) {
+    previewCanvas.style.cursor = "default";
+  }
+});
+resizeCheckbox.addEventListener("change", () => {
+  if (fileInput.files[0] && !outputNameDirty) {
+    filenameInput.value = getDefaultOutputName(fileInput.files[0].name, resizeCheckbox.checked);
+  }
+});
+filenameInput.addEventListener("input", () => {
+  outputNameDirty = filenameInput.value.trim() !== "";
+});
 window.addEventListener("resize", setCanvasResolution);
 
 setCanvasResolution();

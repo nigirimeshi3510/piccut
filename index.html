@@ -11,19 +11,13 @@
 </head>
 <body>
   <main class="app-shell">
-    <section class="hero">
-      <p class="eyebrow">Browser Crop Tool</p>
-      <h1>16:5 固定で切り抜いて、そのまま保存</h1>
-      <p class="lead">
-        JPG / JPEG / PNG を読み込み、固定比率 16:5 の切り抜き枠をドラッグして位置調整できます。
-      </p>
-    </section>
+    <p class="description">画像を640*200に切り抜き</p>
 
     <section class="panel controls">
       <div class="control-row">
         <label class="file-picker">
           <span>画像を開く</span>
-          <input id="fileInput" type="file" accept=".jpg,.jpeg,.png,image/jpeg,image/png">
+          <input id="fileInput" type="file" accept="image/*">
         </label>
         <button id="saveButton" type="button" disabled>切り抜きして保存</button>
       </div>
@@ -32,6 +26,13 @@
         <label class="checkbox">
           <input id="resizeCheckbox" type="checkbox" checked>
           <span>保存時に 640x200 にリサイズする</span>
+        </label>
+      </div>
+
+      <div class="control-row control-row-options">
+        <label class="text-field" for="filenameInput">
+          <span>出力ファイル名</span>
+          <input id="filenameInput" type="text" placeholder="cropped_image">
         </label>
       </div>
 
@@ -51,7 +52,7 @@
       <div class="canvas-frame">
         <canvas id="previewCanvas" width="960" height="640" aria-label="画像プレビュー"></canvas>
       </div>
-      <p class="hint">枠の内側をドラッグして位置を調整します。枠は画像の外に出ません。</p>
+      <p class="hint">枠の内側で移動、四隅のハンドルで 16:5 を維持したまま拡大縮小できます。枠は画像の外に出ません。</p>
     </section>
   </main>
 
