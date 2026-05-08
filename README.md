@@ -14,4 +14,4 @@
 - GUI上で出力ファイル名を編集可能
 
 # url
-https://nigirimeshi3510.github.io/piccut/
+https://norei3510.github.io/piccut/
